@@ -16,7 +16,7 @@ Windows tray utility for the `tun_rotate_microservice` v2.3 (Linux side).
   - Reload settings
   - Open log
   - Exit
-- Tray tooltip shows current tunnel + external IP (auto-refreshes every 15 s by default).
+- Tray tooltip shows current tunnel + external IP (auto-refreshes every 120 s by default; configurable).
 - Tray icon color: 🟢 OK · 🟡 warning · 🔴 no connection · 🔵 busy.
 - Optional SMB auto-remount if the drive becomes inaccessible.
 
@@ -43,7 +43,7 @@ Default `config.json`:
 {
   "server_url": "http://192.168.137.1:5000",
   "request_timeout": 30,
-  "status_poll_interval": 15,
+  "status_poll_interval": 120,
   "smb": {
     "drive_letter": "Z:",
     "unc_path": "\\\\192.168.137.1\\share",

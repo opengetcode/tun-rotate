@@ -43,7 +43,7 @@ from pystray import MenuItem as Item, Menu
 # ─────────────────────────────────────────────
 
 APP_NAME = "tun_tray"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 
 if sys.platform == "win32":
     CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
@@ -56,7 +56,7 @@ LOG_FILE = CONFIG_DIR / "tun_tray.log"
 DEFAULT_CONFIG = {
     "server_url": "http://192.168.137.1:5000",
     "request_timeout": 30,
-    "status_poll_interval": 15,
+    "status_poll_interval": 120,
     "smb": {
         "drive_letter": "Z:",
         "unc_path": r"\\192.168.137.1\share",
@@ -626,7 +626,7 @@ class TrayApp:
     def _poll_loop(self):
         # initial delay to let tray icon appear
         time.sleep(1)
-        interval = max(5, int(self.cfg.get("status_poll_interval", 15)))
+        interval = max(5, int(self.cfg.get("status_poll_interval", 120)))
         while not self._stop.is_set():
             if not self._busy:
                 self._poll_status_once()
