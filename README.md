@@ -18,6 +18,7 @@ Windows tray utility for `tun_rotate_microservice` v2.8+ (Linux side).
   - Open settings (opens `config.json`)
   - Reload settings
   - Open log
+  - **Enable autostart** / **Disable autostart** — toggles the shortcut in `shell:startup`
   - Exit
 - Tray tooltip shows current tunnel + external IP (auto-refreshes every 120 s by default; configurable).
 - Tray icon color: 🟢 OK · 🟡 warning · 🔴 no connection · 🔵 busy.
@@ -36,7 +37,9 @@ Windows tray utility for `tun_rotate_microservice` v2.8+ (Linux side).
 
 ### Autostart
 
-Press `Win + R`, type `shell:startup`, and place a shortcut to `tun_tray.exe` there.
+Right-click tray → **Enable autostart**. Creates a shortcut in `shell:startup` so the tray launches on user login. Toggle off anytime — the same menu item becomes **Disable autostart** while enabled.
+
+Manual alternative: `Win + R`, type `shell:startup`, drop a shortcut to `tun_tray.exe` there.
 
 ## Configuration
 
@@ -149,6 +152,7 @@ Right-click tray → **Open log**.
 
 ## Version history
 
+- **v1.3** — пункт меню Enable/Disable autostart (управление ярлыком в `shell:startup`).
 - **v1.2** — добавлено подменю "Switch to →" со списком доступных туннелей (`/rotate?tunnel=`).
 - **v1.1** — дефолтный `status_poll_interval` поднят с 15 до 120 секунд (снижение нагрузки на сервер).
 - **v1.0** — базовый функционал: rotate, rotate_all, status, SMB remount.

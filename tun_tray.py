@@ -43,7 +43,7 @@ from pystray import MenuItem as Item, Menu
 # ─────────────────────────────────────────────
 
 APP_NAME = "tun_tray"
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 
 if sys.platform == "win32":
     CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
@@ -253,6 +253,99 @@ def smb_is_alive(smb_cfg):
 
 
 # ─────────────────────────────────────────────
+# Autostart (Windows: shortcut in shell:startup folder)
+# ─────────────────────────────────────────────
+
+def _startup_folder():
+    """Path to user's Startup folder, e.g.
+    C:\\Users\\X\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup"""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+
+
+def _startup_lnk_path():
+    folder = _startup_folder()
+    if not folder:
+        return None
+    return folder / f"{APP_NAME}.lnk"
+
+
+def _current_exe_path():
+    """When running as PyInstaller .exe, returns the .exe path. When running
+    from source, returns the python interpreter + script (as a tuple)."""
+    if getattr(sys, "frozen", False):
+        return sys.executable, None
+    return sys.executable, os.path.abspath(__file__)
+
+
+def autostart_is_enabled():
+    if sys.platform != "win32":
+        return False
+    lnk = _startup_lnk_path()
+    return bool(lnk and lnk.exists())
+
+
+def autostart_enable():
+    """Create a .lnk in shell:startup pointing at the current exe.
+    Uses PowerShell + WScript.Shell COM (no external deps)."""
+    if sys.platform != "win32":
+        return False, "Autostart is only supported on Windows"
+
+    lnk = _startup_lnk_path()
+    if not lnk:
+        return False, "Cannot locate Startup folder (APPDATA missing?)"
+    lnk.parent.mkdir(parents=True, exist_ok=True)
+
+    exe, script = _current_exe_path()
+    if script:
+        target = exe
+        args = f'"{script}"'
+        workdir = os.path.dirname(script)
+    else:
+        target = exe
+        args = ""
+        workdir = os.path.dirname(exe)
+
+    # Escape single quotes in PowerShell strings: ' -> ''
+    def ps_escape(s):
+        return s.replace("'", "''")
+
+    ps_script = (
+        "$WshShell = New-Object -comObject WScript.Shell; "
+        f"$lnk = $WshShell.CreateShortcut('{ps_escape(str(lnk))}'); "
+        f"$lnk.TargetPath = '{ps_escape(target)}'; "
+        f"$lnk.Arguments = '{ps_escape(args)}'; "
+        f"$lnk.WorkingDirectory = '{ps_escape(workdir)}'; "
+        "$lnk.WindowStyle = 7; "  # minimized
+        "$lnk.Save()"
+    )
+
+    rc, out = _run(["powershell", "-NoProfile", "-Command", ps_script])
+    if rc != 0:
+        return False, f"PowerShell failed: {out}"
+    if not lnk.exists():
+        return False, f"Shortcut not created at {lnk}"
+    return True, f"Enabled. Shortcut at: {lnk}"
+
+
+def autostart_disable():
+    if sys.platform != "win32":
+        return False, "Autostart is only supported on Windows"
+    lnk = _startup_lnk_path()
+    if not lnk:
+        return False, "Cannot locate Startup folder"
+    if not lnk.exists():
+        return True, "Already disabled (no shortcut found)"
+    try:
+        lnk.unlink()
+        return True, f"Disabled. Removed: {lnk}"
+    except OSError as e:
+        return False, f"Failed to remove shortcut: {e}"
+
+
+# ─────────────────────────────────────────────
 # Tray application
 # ─────────────────────────────────────────────
 
@@ -334,6 +427,11 @@ class TrayApp:
             Item("Open settings", self._on_open_settings),
             Item("Reload settings", self._on_reload_settings),
             Item("Open log", self._on_open_log),
+            Item(
+                lambda item: ("Disable autostart" if autostart_is_enabled()
+                              else "Enable autostart"),
+                self._on_toggle_autostart,
+            ),
             Menu.SEPARATOR,
             Item(f"{APP_NAME} v{APP_VERSION}", None, enabled=False),
             Item("Exit", self._on_exit),
@@ -560,6 +658,24 @@ class TrayApp:
                 subprocess.Popen(["xdg-open", str(LOG_FILE)])
         except Exception as e:
             self._notify("Open log failed", str(e))
+
+    def _on_toggle_autostart(self, icon, item):
+        threading.Thread(target=self._do_toggle_autostart, daemon=True).start()
+
+    def _do_toggle_autostart(self):
+        if autostart_is_enabled():
+            ok, msg = autostart_disable()
+            logging.info(f"autostart disable: ok={ok}, {msg}")
+            self._notify("Autostart" + (" disabled" if ok else " failed"), msg)
+        else:
+            ok, msg = autostart_enable()
+            logging.info(f"autostart enable: ok={ok}, {msg}")
+            self._notify("Autostart" + (" enabled" if ok else " failed"), msg)
+        # Refresh menu so label flips
+        try:
+            self.icon.update_menu()
+        except Exception:
+            pass
 
     def _on_exit(self, icon, item):
         logging.info("exit requested")
