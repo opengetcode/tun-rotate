@@ -43,7 +43,7 @@ from pystray import MenuItem as Item, Menu
 # ─────────────────────────────────────────────
 
 APP_NAME = "tun_tray"
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 if sys.platform == "win32":
     CONFIG_DIR = Path(os.environ.get("APPDATA", str(Path.home()))) / APP_NAME
@@ -170,6 +170,9 @@ class ApiClient:
     def rotate(self):
         return self._get("/rotate")
 
+    def rotate_to(self, tunnel):
+        return self._get(f"/rotate?tunnel={tunnel}")
+
     def rotate_all(self, tunnel=None):
         body = {"tunnel": tunnel} if tunnel else {}
         return self._post("/rotate_all", body)
@@ -268,6 +271,7 @@ class TrayApp:
             "current_tunnel": None,
             "status_text": "Starting...",
             "ok": None,  # True/False/None
+            "available_tunnels": [],
         }
 
         self.icon = pystray.Icon(
@@ -316,6 +320,10 @@ class TrayApp:
         return Menu(
             Item("Rotate this machine", self._on_rotate, default=True),
             Item("Rotate all machines", self._on_rotate_all),
+            Item(
+                "Switch to",
+                Menu(self._switch_to_items),  # callable -> recomputed on open
+            ),
             Menu.SEPARATOR,
             Item("Show status", self._on_show_status),
             Item("Refresh now", self._on_refresh_now),
@@ -330,6 +338,19 @@ class TrayApp:
             Item(f"{APP_NAME} v{APP_VERSION}", None, enabled=False),
             Item("Exit", self._on_exit),
         )
+
+    def _switch_to_items(self):
+        """Dynamic submenu generator: rebuilt each time the menu is opened.
+        Returns an iterable of pystray.MenuItem."""
+        tunnels = list(self.state.get("available_tunnels") or [])
+        current = self.state.get("current_tunnel")
+        if not tunnels:
+            return [Item("(no tunnels — click 'Refresh now')", None, enabled=False)]
+        items = []
+        for t in tunnels:
+            label = f"\u2713 {t}" if t == current else f"   {t}"
+            items.append(Item(label, self._on_switch_to(t)))
+        return items
 
     # ── busy guard ──────────────────────────
 
@@ -397,6 +418,52 @@ class TrayApp:
         if not self._try_busy():
             return
         threading.Thread(target=self._do_rotate_all, daemon=True).start()
+
+    def _on_switch_to(self, tunnel):
+        """Factory for menu callbacks. Returns a callback bound to a specific
+        tunnel name. pystray calls it with (icon, item)."""
+        def _cb(icon, item):
+            if not self._try_busy():
+                return
+            threading.Thread(target=self._do_switch_to, args=(tunnel,), daemon=True).start()
+        return _cb
+
+    def _do_switch_to(self, tunnel):
+        try:
+            logging.info(f"switch_to: requesting /rotate?tunnel={tunnel}")
+            r = self.api.rotate_to(tunnel)
+            data = self._safe_json(r)
+            if r.status_code == 200 and data.get("status") in ("ok", "warning"):
+                tun = data.get("new_tunnel") or tunnel
+                ip = data.get("external_ip")
+                self.state["current_tunnel"] = tun
+                self.state["external_ip"] = ip
+                if data.get("status") == "ok":
+                    self.state["ok"] = True
+                    self.state["status_text"] = "OK"
+                    self._set_icon(ICON_OK)
+                    self._notify(f"Switched to {tun}", f"IP: {ip}")
+                else:
+                    self.state["ok"] = False
+                    self.state["status_text"] = "Warning: rule order"
+                    self._set_icon(ICON_WARN)
+                    self._notify(f"Switched to {tun} (warning)", data.get("message", ""))
+            else:
+                self.state["ok"] = False
+                self.state["status_text"] = f"Error {r.status_code}"
+                self._set_icon(ICON_ERR)
+                msg = data.get("message") if isinstance(data, dict) else r.text[:200]
+                self._notify(f"Switch to {tunnel} failed", str(msg))
+            self._refresh_tooltip()
+        except requests.RequestException as e:
+            logging.error(f"switch_to request failed: {e}")
+            self.state["ok"] = False
+            self.state["status_text"] = "No connection"
+            self._set_icon(ICON_ERR)
+            self._notify(f"Switch to {tunnel} failed", f"No connection to server\n{e}")
+            self._refresh_tooltip()
+        finally:
+            self._release_busy()
 
     def _do_rotate_all(self):
         try:
@@ -539,6 +606,8 @@ class TrayApp:
 
             data = self._safe_json(r)
             machines = data.get("machines", {}) or {}
+            # Cache available tunnels for the dynamic "Switch to" submenu.
+            self.state["available_tunnels"] = data.get("available_tunnels", []) or []
 
             # Try to find "our" machine entry. Server identifies the requester by
             # source IP, but /status returns all known machines. We pick by the
